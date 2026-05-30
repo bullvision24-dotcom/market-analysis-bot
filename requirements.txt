@@ -1,0 +1,6 @@
+python-telegram-bot
+apscheduler
+requests
+pytz
+anthropic
+yfinance
