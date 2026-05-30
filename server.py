@@ -39,11 +39,13 @@ def get_market_data():
         "Apple": "AAPL",
         "Meta": "META",
     }
+
     if is_weekend():
         tickers = {
             "Oro (XAU)": "GC=F",
             "Argento (XAG)": "SI=F",
         }
+
     for name, ticker in tickers.items():
         try:
             t = yf.Ticker(ticker)
@@ -54,6 +56,7 @@ def get_market_data():
             data[name] = {"price": price, "change": change}
         except Exception as e:
             logger.error(f"Error fetching {name}: {e}")
+
     return data
 
 def get_crypto_data():
@@ -66,6 +69,7 @@ def get_crypto_data():
         }
         resp = requests.get(url, params=params, timeout=10)
         data = resp.json()
+
         return {
             "Bitcoin (BTC)": {"price": data["bitcoin"]["usd"], "change": data["bitcoin"]["usd_24h_change"]},
             "Ethereum (ETH)": {"price": data["ethereum"]["usd"], "change": data["ethereum"]["usd_24h_change"]},
@@ -78,6 +82,7 @@ def get_economic_events():
     try:
         today = datetime.now(ITALY_TZ).strftime("%Y-%m-%d")
         url = "https://financialmodelingprep.com/stable/economic-calendar"
+
         params = {
             "from": today,
             "to": today,
@@ -85,7 +90,20 @@ def get_economic_events():
         }
 
         resp = requests.get(url, params=params, timeout=10)
-        data = resp.json()
+
+        logger.info(f"FMP status code: {resp.status_code}")
+        logger.info(f"FMP response text: {resp.text[:500]}")
+
+        if resp.status_code != 200:
+            logger.error(f"FMP HTTP error: {resp.status_code}")
+            return []
+
+        try:
+            data = resp.json()
+        except Exception as json_error:
+            logger.error(f"FMP JSON decode error: {json_error}")
+            logger.error(f"FMP raw response: {resp.text[:1000]}")
+            return []
 
         if not isinstance(data, list):
             logger.error(f"FMP returned non-list response: {data}")
@@ -163,6 +181,7 @@ def get_ai_analysis(market_data, crypto_data, session_type, events):
         "recap": "recap pomeridiano",
         "close": "chiusura dei mercati",
     }
+
     session_label = session_labels.get(session_type, "aggiornamento mercati")
 
     prompt = f"""Sei un analista finanziario senior. Scrivi un'analisi professionale per trader per {session_label}.
@@ -257,6 +276,7 @@ async def send_market_update(session_type, header_emoji, header_text):
     if is_weekend() and session_type in ["wallstreet", "recap"]:
         logger.info(f"Skipping {session_type} — weekend")
         return
+
     try:
         market_data = get_market_data()
         crypto_data = get_crypto_data()
@@ -297,16 +317,20 @@ async def send_market_update(session_type, header_emoji, header_text):
 async def check_and_send_events():
     if is_weekend():
         return
+
     try:
         events = get_economic_events()
         now = datetime.now(ITALY_TZ)
+
         for event in events:
             try:
                 event_time_str = event.get("date", "")
                 if not event_time_str:
                     continue
+
                 event_time = datetime.fromisoformat(event_time_str.replace("Z", "+00:00")).astimezone(ITALY_TZ)
                 diff = (event_time - now).total_seconds()
+
                 if event.get("actual") and abs(diff) < 1800:
                     analysis = get_ai_event_analysis(event)
                     impact_emoji = "🔴" if event.get("impact") == "High" else "🟡"
@@ -326,8 +350,10 @@ async def check_and_send_events():
 
                     await bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="HTML")
                     logger.info(f"Sent event: {event.get('event')}")
+
             except Exception as e:
                 logger.error(f"Error processing event: {e}")
+
     except Exception as e:
         logger.error(f"Error in check_and_send_events: {e}")
 
@@ -345,16 +371,22 @@ async def close_update():
 
 async def main():
     logger.info("Starting AI MarketsAnalysis Bot...")
+
     scheduler = AsyncIOScheduler(timezone=ITALY_TZ)
+
     scheduler.add_job(morning_update, "cron", hour=8, minute=0)
     scheduler.add_job(wallstreet_update, "cron", hour=14, minute=30)
     scheduler.add_job(recap_update, "cron", hour=18, minute=0)
     scheduler.add_job(close_update, "cron", hour=22, minute=0)
     scheduler.add_job(check_and_send_events, "cron", minute="*/30")
+
     scheduler.start()
+
     logger.info("Scheduler started. Sending test message...")
     await send_market_update("morning", "🚀", "BOT AVVIATO - TEST MERCATI")
+
     logger.info("Bot running.")
+
     while True:
         await asyncio.sleep(3600)
 
