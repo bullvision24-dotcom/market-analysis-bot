@@ -18,17 +18,21 @@ ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY")
 FMP_API_KEY = os.environ.get("FMP_API_KEY")
 
 ITALY_TZ = pytz.timezone("Europe/Rome")
+
 bot = Bot(token=BOT_TOKEN)
 client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 
 DISCLAIMER = "⚠️ <i>Contenuto generato da AI. Non costituisce consiglio finanziario. Fai sempre le tue valutazioni.</i>"
 SEPARATOR = "━━━━━━━━━━━━━━━"
 
+
 def is_weekend():
     return datetime.now(ITALY_TZ).weekday() >= 5
 
+
 def get_market_data():
     data = {}
+
     tickers = {
         "Oro (XAU)": "GC=F",
         "Argento (XAG)": "SI=F",
@@ -50,14 +54,21 @@ def get_market_data():
         try:
             t = yf.Ticker(ticker)
             info = t.fast_info
+
             price = info.last_price
             prev_close = info.previous_close
+
+            if price is None or prev_close is None:
+                continue
+
             change = ((price - prev_close) / prev_close) * 100 if prev_close else 0
             data[name] = {"price": price, "change": change}
+
         except Exception as e:
             logger.error(f"Error fetching {name}: {e}")
 
     return data
+
 
 def get_crypto_data():
     try:
@@ -67,16 +78,25 @@ def get_crypto_data():
             "vs_currencies": "usd",
             "include_24hr_change": "true",
         }
+
         resp = requests.get(url, params=params, timeout=10)
         data = resp.json()
 
         return {
-            "Bitcoin (BTC)": {"price": data["bitcoin"]["usd"], "change": data["bitcoin"]["usd_24h_change"]},
-            "Ethereum (ETH)": {"price": data["ethereum"]["usd"], "change": data["ethereum"]["usd_24h_change"]},
+            "Bitcoin (BTC)": {
+                "price": data["bitcoin"]["usd"],
+                "change": data["bitcoin"]["usd_24h_change"],
+            },
+            "Ethereum (ETH)": {
+                "price": data["ethereum"]["usd"],
+                "change": data["ethereum"]["usd_24h_change"],
+            },
         }
+
     except Exception as e:
         logger.error(f"Error fetching crypto: {e}")
         return {}
+
 
 def get_economic_events():
     try:
@@ -92,7 +112,11 @@ def get_economic_events():
         resp = requests.get(url, params=params, timeout=10)
 
         logger.info(f"FMP status code: {resp.status_code}")
-        logger.info(f"FMP response text: {resp.text[:500]}")
+        logger.info(f"FMP response text: {resp.text[:300]}")
+
+        if resp.status_code == 402:
+            logger.warning("FMP economic calendar is restricted on current subscription.")
+            return []
 
         if resp.status_code != 200:
             logger.error(f"FMP HTTP error: {resp.status_code}")
@@ -102,7 +126,7 @@ def get_economic_events():
             data = resp.json()
         except Exception as json_error:
             logger.error(f"FMP JSON decode error: {json_error}")
-            logger.error(f"FMP raw response: {resp.text[:1000]}")
+            logger.error(f"FMP raw response: {resp.text[:500]}")
             return []
 
         if not isinstance(data, list):
@@ -117,6 +141,7 @@ def get_economic_events():
     except Exception as e:
         logger.error(f"Error fetching events: {e}")
         return []
+
 
 def format_prices(market_data, crypto_data):
     lines = []
@@ -163,17 +188,26 @@ def format_prices(market_data, crypto_data):
 
     return "\n".join(lines)
 
+
 def get_ai_analysis(market_data, crypto_data, session_type, events):
     prices_text = format_prices(market_data, crypto_data)
 
     events_text = ""
     if events:
-        events_text = "\n\nEventi economici di oggi:\n"
+        events_text = "\n\nEventi economici disponibili:\n"
         for e in events[:5]:
             impact = "🔴" if e.get("impact") == "High" else "🟡"
-            events_text += f"{impact} {e.get('event')} ({e.get('country')}) — Atteso: {e.get('estimate', 'N/D')} — Precedente: {e.get('previous', 'N/D')}\n"
+            events_text += (
+                f"{impact} {e.get('event')} ({e.get('country')}) — "
+                f"Atteso: {e.get('estimate', 'N/D')} — "
+                f"Precedente: {e.get('previous', 'N/D')}\n"
+            )
 
-    weekend_note = "\nÈ weekend. Forex e indici sono chiusi. Analizza solo metalli e crypto." if is_weekend() else ""
+    weekend_note = (
+        "\nNota: è weekend. Forex e indici sono chiusi; non fare analisi operative su mercati chiusi."
+        if is_weekend()
+        else ""
+    )
 
     session_labels = {
         "morning": "apertura dei mercati europei",
@@ -184,43 +218,51 @@ def get_ai_analysis(market_data, crypto_data, session_type, events):
 
     session_label = session_labels.get(session_type, "aggiornamento mercati")
 
-    prompt = f"""Sei un analista finanziario senior. Scrivi un'analisi professionale per trader per {session_label}.
+    prompt = f"""Sei un analista finanziario professionale, prudente e molto preciso. Devi scrivere un'analisi per trader per {session_label}.
 
-DATI REALI IN QUESTO MOMENTO:
+DATI DISPONIBILI:
 {prices_text}
 {events_text}{weekend_note}
 
-REGOLE FONDAMENTALI:
-- Usa SOLO i dati numerici forniti sopra. NON inventare prezzi o livelli non presenti.
-- Scrivi in italiano corretto e professionale.
-- Usa SOLO tag HTML Telegram: <b>grassetto</b>, <i>corsivo</i>. ZERO asterischi, ZERO cancelletti.
-- Sii concreto: cita sempre i valori numerici reali.
-- Massimo 200 parole totali.
+REGOLE RIGIDE:
+- Usa SOLO i dati presenti sopra.
+- NON inventare supporti, resistenze, target, trendline, volumi, pattern grafici, notizie o dati macro non presenti.
+- NON dire che un asset è bullish o bearish se hai solo prezzo e variazione percentuale.
+- NON fare previsioni aggressive.
+- NON dare segnali buy/sell.
+- NON parlare di rotture tecniche se non hai livelli tecnici reali.
+- Se i dati sono insufficienti, dichiaralo chiaramente.
+- Puoi commentare solo: prezzo attuale, variazione percentuale, forza/debolezza relativa tra asset.
+- Usa italiano professionale, diretto e prudente.
+- Usa SOLO HTML Telegram: <b>grassetto</b>, <i>corsivo</i>.
+- Massimo 170 parole.
 
 STRUTTURA OBBLIGATORIA:
 
-<b>📊 Quadro Generale</b>
-3-4 frasi sul sentiment complessivo basate sui movimenti reali. Cita i numeri.
+<b>📊 Lettura dei Dati</b>
+Riassumi cosa mostrano i numeri reali, citando prezzi e variazioni.
 
-<b>🔍 Asset in Evidenza</b>
-2-3 asset specifici con i loro livelli reali e cosa significa tecnicamente o macro.
+<b>🔍 Asset da Monitorare</b>
+Indica 2-3 asset con i movimenti più rilevanti. Spiega solo cosa si può dedurre dai dati disponibili.
 
-<b>🔮 Come Potrebbero Comportarsi</b>
-Scenario probabile per le prossime ore basato sui dati attuali. Sii diretto ma onesto sull'incertezza.
+<b>⚠️ Limiti dell'Analisi</b>
+Scrivi cosa NON si può sapere da questi dati, ad esempio livelli tecnici, volumi reali o direzione certa.
 
-<b>💡 Osservazione Chiave</b>
-Una sola riga. L'elemento più importante da tenere d'occhio oggi."""
+<b>💡 Nota Operativa</b>
+Una frase prudente e utile per il trader, senza segnali inventati."""
 
     try:
         resp = client.messages.create(
             model="claude-sonnet-4-6",
-            max_tokens=600,
+            max_tokens=500,
             messages=[{"role": "user", "content": prompt}],
         )
         return resp.content[0].text
+
     except Exception as e:
         logger.error(f"AI analysis error: {e}")
         return "<i>Analisi temporaneamente non disponibile.</i>"
+
 
 def get_ai_event_analysis(event):
     nome = event.get("event", "")
@@ -231,7 +273,7 @@ def get_ai_event_analysis(event):
     precedente = event.get("previous", "N/D")
     impatto = event.get("impact", "")
 
-    prompt = f"""Sei un analista finanziario senior. Analizza questo evento economico reale.
+    prompt = f"""Sei un analista finanziario professionale e prudente. Analizza questo evento economico reale.
 
 Evento: {nome}
 Paese: {paese}
@@ -242,35 +284,39 @@ Precedente: {precedente}
 Impatto: {impatto}
 
 REGOLE:
-- Scrivi in italiano corretto e professionale.
-- Usa SOLO tag HTML Telegram: <b>grassetto</b>, <i>corsivo</i>. ZERO asterischi, ZERO cancelletti.
-- Massimo 180 parole.
-- Se il dato non è ancora uscito (actual = N/D), analizza cosa aspettarsi.
+- Usa SOLO i dati forniti.
+- Non inventare livelli tecnici.
+- Non dare segnali buy/sell.
+- Se il dato è N/D, specifica che non è ancora disponibile.
+- Usa SOLO tag HTML Telegram: <b>grassetto</b>, <i>corsivo</i>.
+- Massimo 160 parole.
 
 STRUTTURA:
 
 <b>📌 Cos'è e Perché Conta</b>
-Spiegazione concisa dell'indicatore e impatto sui mercati.
+Spiegazione concisa dell'indicatore.
 
 <b>📊 Dato vs Attese</b>
-Commento numerico preciso: sopra, sotto o in linea con il consensus.
+Commento numerico preciso.
 
-<b>⚡ Reazione Attesa</b>
-Come reagiranno forex, indici, oro. Sii specifico con direzione e motivazione.
+<b>⚡ Possibile Impatto</b>
+Scenario prudente, senza direzioni certe.
 
-<b>⚠️ Livelli da Monitorare</b>
-Gli asset più sensibili con i livelli tecnici chiave."""
+<b>⚠️ Nota</b>
+Limiti dell'analisi."""
 
     try:
         resp = client.messages.create(
             model="claude-sonnet-4-6",
-            max_tokens=500,
+            max_tokens=450,
             messages=[{"role": "user", "content": prompt}],
         )
         return resp.content[0].text
+
     except Exception as e:
         logger.error(f"AI event error: {e}")
         return "<i>Analisi evento non disponibile.</i>"
+
 
 async def send_market_update(session_type, header_emoji, header_text):
     if is_weekend() and session_type in ["wallstreet", "recap"]:
@@ -314,6 +360,7 @@ async def send_market_update(session_type, header_emoji, header_text):
     except Exception as e:
         logger.error(f"Error sending {session_type} update: {e}")
 
+
 async def check_and_send_events():
     if is_weekend():
         return
@@ -328,7 +375,10 @@ async def check_and_send_events():
                 if not event_time_str:
                     continue
 
-                event_time = datetime.fromisoformat(event_time_str.replace("Z", "+00:00")).astimezone(ITALY_TZ)
+                event_time = datetime.fromisoformat(
+                    event_time_str.replace("Z", "+00:00")
+                ).astimezone(ITALY_TZ)
+
                 diff = (event_time - now).total_seconds()
 
                 if event.get("actual") and abs(diff) < 1800:
@@ -357,17 +407,22 @@ async def check_and_send_events():
     except Exception as e:
         logger.error(f"Error in check_and_send_events: {e}")
 
+
 async def morning_update():
     await send_market_update("morning", "🌅", "APERTURA MERCATI EUROPEI")
+
 
 async def wallstreet_update():
     await send_market_update("wallstreet", "🇺🇸", "APERTURA WALL STREET")
 
+
 async def recap_update():
     await send_market_update("recap", "📋", "RECAP POMERIDIANO")
 
+
 async def close_update():
     await send_market_update("close", "🌙", "CHIUSURA MERCATI & OUTLOOK")
+
 
 async def main():
     logger.info("Starting AI MarketsAnalysis Bot...")
@@ -389,6 +444,7 @@ async def main():
 
     while True:
         await asyncio.sleep(3600)
+
 
 if __name__ == "__main__":
     asyncio.run(main())
