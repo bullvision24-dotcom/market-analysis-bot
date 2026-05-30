@@ -77,10 +77,25 @@ def get_crypto_data():
 def get_economic_events():
     try:
         today = datetime.now(ITALY_TZ).strftime("%Y-%m-%d")
-        url = f"https://financialmodelingprep.com/api/v3/economic_calendar?from={today}&to={today}&apikey={FMP_API_KEY}"
-        resp = requests.get(url, timeout=10)
-        events = resp.json()
-        return [e for e in events if e.get("impact") in ["High", "Medium"]]
+        url = "https://financialmodelingprep.com/stable/economic-calendar"
+        params = {
+            "from": today,
+            "to": today,
+            "apikey": FMP_API_KEY,
+        }
+
+        resp = requests.get(url, params=params, timeout=10)
+        data = resp.json()
+
+        if not isinstance(data, list):
+            logger.error(f"FMP returned non-list response: {data}")
+            return []
+
+        return [
+            e for e in data
+            if isinstance(e, dict) and e.get("impact") in ["High", "Medium"]
+        ]
+
     except Exception as e:
         logger.error(f"Error fetching events: {e}")
         return []
